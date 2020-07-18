@@ -216,7 +216,9 @@ def telnet_logins(src_ip_port, dst_ip_port, load, ack, seq):
             telnet_stream[src_ip_port] += load.decode('utf8')
         except UnicodeDecodeError:
             pass
-
+        #zezadas
+        if ord(telnet_stream[src_ip_port][-1]) == 0x7f:
+            telnet_stream[src_ip_port]=telnet_stream[src_ip_port][:-1]+"<DEL>"
         # \r or \r\n or \n terminate commands in telnet if my pcaps are to be believed
         if '\r' in telnet_stream[src_ip_port] or '\n' in telnet_stream[src_ip_port]:
             telnet_split = telnet_stream[src_ip_port].split(' ', 1)
@@ -390,7 +392,6 @@ def parse_ftp(full_load, dst_ip_port):
         if dst_ip_port[-3:] != ':21':
             msg2 = 'Nonstandard FTP port, confirm the service that is running on it'
             print_strs.append(msg2)
-
     return print_strs
 
 def mail_decode(src_ip_port, dst_ip_port, mail_creds):
