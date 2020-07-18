@@ -1,4 +1,7 @@
-#!/usr/bin/env python2
+#!/usr/bin/env python3
+
+#TODO: backspace on telnet
+
 
 from os import geteuid, devnull
 import logging
@@ -12,13 +15,13 @@ import struct
 import argparse
 import signal
 import base64
-from urllib import unquote
+#from urllib import unquote
 import platform
 from subprocess import Popen, PIPE, check_output
 from collections import OrderedDict
-from BaseHTTPServer import BaseHTTPRequestHandler
-from StringIO import StringIO
-from urllib import unquote
+from http.server import BaseHTTPRequestHandler
+from io import StringIO
+from urllib.parse import unquote
 #import binascii    #already imported on line 10
 # Debug
 #from IPython import embed
@@ -43,17 +46,17 @@ mail_auths = OrderedDict()
 telnet_stream = OrderedDict()
 
 # Regexs
-authenticate_re = '(www-|proxy-)?authenticate'
-authorization_re = '(www-|proxy-)?authorization'
-ftp_user_re = r'USER (.+)\r\n'
-ftp_pw_re = r'PASS (.+)\r\n'
-irc_user_re = r'NICK (.+?)((\r)?\n|\s)'
-irc_pw_re = r'NS IDENTIFY (.+)'
-irc_pw_re2 = 'nickserv :identify (.+)'
-mail_auth_re = '(\d+ )?(auth|authenticate) (login|plain)'
-mail_auth_re1 =  '(\d+ )?login '
-NTLMSSP2_re = 'NTLMSSP\x00\x02\x00\x00\x00.+'
-NTLMSSP3_re = 'NTLMSSP\x00\x03\x00\x00\x00.+'
+authenticate_re = rb'(www-|proxy-)?authenticate'
+authorization_re = rb'(www-|proxy-)?authorization'
+ftp_user_re = rb'USER (.+)\r\n'
+ftp_pw_re = rb'PASS (.+)\r\n'
+irc_user_re = rb'NICK (.+?)((\r)?\n|\s)'
+irc_pw_re = rb'NS IDENTIFY (.+)'
+irc_pw_re2 = rb'nickserv :identify (.+)'
+mail_auth_re = rb'(\d+ )?(auth|authenticate) (login|plain)'
+mail_auth_re1 =  rb'(\d+ )?login '
+NTLMSSP2_re = rb'NTLMSSP\x00\x02\x00\x00\x00.+'
+NTLMSSP3_re = rb'NTLMSSP\x00\x03\x00\x00\x00.+'
 # Prone to false+ but prefer that to false-
 http_search_re = '((search|query|&q|\?q|search\?p|searchterm|keywords|keyword|command|terms|keys|question|kwd|searchPhrase)=([^&][^&]*))'
 
@@ -75,7 +78,7 @@ def iface_finder():
     if system_platform == 'Linux':
         ipr = Popen(['/sbin/ip', 'route'], stdout=PIPE, stderr=DN)
         for line in ipr.communicate()[0].splitlines():
-            if 'default' in line:
+            if 'default' in line.decode("utf-8"):
                 l = line.split()
                 iface = l[4]
                 return iface
@@ -232,9 +235,9 @@ def telnet_logins(src_ip_port, dst_ip_port, load, ack, seq):
     if len(telnet_stream) > 100:
         telnet_stream.popitem(last=False)
     mod_load = load.lower().strip()
-    if mod_load.endswith('username:') or mod_load.endswith('login:'):
+    if mod_load.endswith(b'username:') or mod_load.endswith(b'login:'):
         telnet_stream[dst_ip_port] = 'username '
-    elif mod_load.endswith('password:'):
+    elif mod_load.endswith(b'password:'):
         telnet_stream[dst_ip_port] = 'password '
 
 def ParseMSKerbv5TCP(Data):
@@ -348,10 +351,11 @@ def Decode_Ip_Packet(s):
     d['data']=s[4*d['header_len']:]
     return d
 
-def double_line_checker(full_load, count_str):
+def double_line_checker(full_load, count_str_in):
     '''
     Check if count_str shows up twice
     '''
+    count_str=count_str_in.encode()
     num = full_load.lower().count(count_str)
     if num > 1:
         lines = full_load.count('\r\n')
@@ -393,8 +397,10 @@ def mail_decode(src_ip_port, dst_ip_port, mail_creds):
     '''
     Decode base64 mail creds
     '''
+    if len(mail_creds.replace('\x00', ' '))%4 != 0:
+        return
     try:
-        decoded = base64.b64decode(mail_creds).replace('\x00', ' ').decode('utf8')
+        decoded = base64.b64decode(mail_creds).replace('\x00', ' ')
         decoded = decoded.replace('\x00', ' ')
     except TypeError:
         decoded = None
@@ -527,7 +533,7 @@ def mail_logins(full_load, src_ip_port, dst_ip_port, ack, seq):
             auth_msg = full_load
             auth_msg = auth_msg.split()
             if 2 < len(auth_msg) < 5:
-                mail_creds = ' '.join(auth_msg[2:])
+                mail_creds = ' '.join(auth_msg[2:][0].decode("utf-8"))
                 msg = 'Authentication: %s' % mail_creds
                 printer(src_ip_port, dst_ip_port, msg)
                 mail_decode(src_ip_port, dst_ip_port, mail_creds)
@@ -745,7 +751,7 @@ def headers_to_dict(header_lines):
     '''
     headers = {}
     for line in header_lines:
-        lineList=line.split(': ', 1)
+        lineList=line.split(b': ', 1)
         key=lineList[0].lower()
         if len(lineList)>1:
                 headers[key]=lineList[1]
@@ -771,7 +777,7 @@ def parse_http_line(http_line, http_methods):
     #     HTTP/1.1 407 Proxy Authentication Required ( Access is denied.  )
     # Add a space to method because there's a space in http_methods items
     # to avoid false+
-    if method+' ' not in http_methods:
+    if method+b' ' not in http_methods:
         method = None
         path = None
 
@@ -782,11 +788,11 @@ def parse_http_load(full_load, http_methods):
     Split the raw load into list of headers and body string
     '''
     try:
-        headers, body = full_load.split("\r\n\r\n", 1)
+        headers, body = full_load.split(b"\r\n\r\n", 1)
     except ValueError:
         headers = full_load
         body = ''
-    header_lines = headers.split("\r\n")
+    header_lines = headers.split(b"\r\n")
 
     # Pkts may just contain hex data and no headers in which case we'll
     # still want to parse them for usernames and password
@@ -807,7 +813,7 @@ def get_http_line(header_lines, http_methods):
         for method in http_methods:
             # / is the only char I can think of that's in every http_line
             # Shortest valid: "GET /", add check for "/"?
-            if header.startswith(method):
+            if header.startswith(method.encode()):
                 http_line = header
                 return http_line
 
@@ -923,11 +929,11 @@ def get_login_pass(body):
                   'passwort', 'passwrd', 'wppassword', 'upasswd','senha','contrasena']
 
     for login in userfields:
-        login_re = re.search('(%s=[^&]+)' % login, body, re.IGNORECASE)
+        login_re = re.search(rb'(%s=[^&]+)' % login.encode(), body, re.IGNORECASE)
         if login_re:
             user = login_re.group()
     for passfield in passfields:
-        pass_re = re.search('(%s=[^&]+)' % passfield, body, re.IGNORECASE)
+        pass_re = re.search(rb'(%s=[^&]+)' % passfield.encode(), body, re.IGNORECASE)
         if pass_re:
             passwd = pass_re.group()
 
@@ -949,7 +955,7 @@ def printer(src_ip_port, dst_ip_port, msg):
                         if msg in contents:
                             return
 
-        print print_str
+        print (print_str)
 
         # Escape colors like whatweb has
         ansi_escape = re.compile(r'\x1b[^m]*m')
@@ -959,7 +965,7 @@ def printer(src_ip_port, dst_ip_port, msg):
         logging.info(print_str)
     else:
         print_str = '[%s] %s' % (src_ip_port.split(':')[0], msg)
-        print print_str
+        print (print_str)
 
 def main(args):
     ##################### DEBUG ##########################
@@ -991,12 +997,12 @@ def main(args):
             conf.iface = args.interface
         else:
             conf.iface = iface_finder()
-        print '[*] Using interface:', conf.iface
+        print ('[*] Using interface:' + conf.iface.decode("utf-8"))
 
         if args.filterip:
             sniff(iface=conf.iface, prn=pkt_parser, filter="not host %s" % args.filterip, store=0)
         else:
-            sniff(iface=conf.iface, prn=pkt_parser, store=0)
+            sniff(iface=conf.iface.decode("utf-8"), prn=pkt_parser, store=0)
 
 
 if __name__ == "__main__":
