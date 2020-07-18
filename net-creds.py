@@ -1,8 +1,5 @@
 #!/usr/bin/env python3
 
-#TODO: backspace on telnet
-
-
 from os import geteuid, devnull
 import logging
 # shut up scapy
@@ -216,7 +213,6 @@ def telnet_logins(src_ip_port, dst_ip_port, load, ack, seq):
             telnet_stream[src_ip_port] += load.decode('utf8')
         except UnicodeDecodeError:
             pass
-        #zezadas
         if ord(telnet_stream[src_ip_port][-1]) == 0x7f:
             telnet_stream[src_ip_port]=telnet_stream[src_ip_port][:-1]+"<DEL>"
         # \r or \r\n or \n terminate commands in telnet if my pcaps are to be believed
